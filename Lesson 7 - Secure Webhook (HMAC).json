@@ -1,0 +1,169 @@
+{
+  "name": "Lesson 7 - Secure Webhook (HMAC)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lesson7-assessment",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "34bc0386-a533-4962-b517-3fd71c8a813e",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        96
+      ],
+      "webhookId": "058e80bf-63a8-4f45-bdaf-dbd889017e28"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const crypto = require('crypto');\n\n// The shared HMAC secret. Preferred: set WEBHOOK_HMAC_SECRET as an n8n\n// environment variable. If env access is blocked on this instance, edit the\n// FALLBACK_SECRET below to your shared secret (must match the sender/Postman).\nconst FALLBACK_SECRET = 'change-me-shared-secret';\nlet secret = FALLBACK_SECRET;\ntry {\n  if (typeof $env !== 'undefined' && $env && $env.WEBHOOK_HMAC_SECRET) {\n    secret = $env.WEBHOOK_HMAC_SECRET;\n  }\n} catch (e) {\n  // env access is disabled on this instance; use FALLBACK_SECRET\n}\n\nconst headers = $json.headers || {};\nconst query = $json.query || {};\nconst body = $json.body || {};\n\n// The signing base: the raw request body when available, else the JSON body.\nconst rawBody = (typeof $json.rawBody === 'string' && $json.rawBody.length)\n  ? $json.rawBody\n  : JSON.stringify(body);\n\n// Incoming signature header (supports \"sha256=...\" or bare hex).\nconst rawHeader = String(headers['x-signature'] || headers['x-hub-signature-256'] || '');\nconst providedSig = rawHeader.replace(/^sha256=/i, '').trim().toLowerCase();\n\nlet expectedSig = null;\nlet signatureValid = false;\nif (secret) {\n  expectedSig = crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');\n  try {\n    signatureValid =\n      providedSig.length === expectedSig.length &&\n      crypto.timingSafeEqual(Buffer.from(providedSig), Buffer.from(expectedSig));\n  } catch (e) {\n    signatureValid = false;\n  }\n}\n\nreturn {\n  signatureValid,\n  secretConfigured: Boolean(secret),\n  expectedSignature: expectedSig,\n  providedSignature: providedSig || null,\n  parsed: {\n    headers,\n    query,\n    body,\n  },\n  receivedAt: new Date().toISOString(),\n};"
+      },
+      "id": "45cd7f87-ded3-4571-a9e1-595894018ff7",
+      "name": "Verify HMAC & Parse Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "sig-valid",
+              "leftValue": "={{ $json.signatureValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "530dd5f9-b2e1-4865-a1bb-2e7476323bb8",
+      "name": "Signature Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"accepted\", \"message\": \"Webhook verified and processed\", \"received\": $json.parsed, \"receivedAt\": $json.receivedAt } }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "X-Processed-By",
+                "value": "n8n-lesson7-assessment"
+              }
+            ]
+          }
+        }
+      },
+      "id": "8b334dd8-e314-46d3-8def-35858a97f916",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"rejected\", \"message\": ($json.secretConfigured ? \"Invalid HMAC signature\" : \"HMAC secret not configured on server\") } }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "0cba3a1d-ea98-4126-9a9b-1ff477b2a1e3",
+      "name": "Respond 401 Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        672,
+        192
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Verify HMAC & Parse Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify HMAC & Parse Payload": {
+      "main": [
+        [
+          {
+            "node": "Signature Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "7b17dc2c-4a54-4020-94b8-c61a062e2d10",
+  "meta": {
+    "instanceId": "201381d913fa9e78389f7093cb99cedc70c766251a500f897db19feccfda3bd0"
+  },
+  "nodeGroups": [],
+  "id": "ZKSdocpgBaJIqp5v",
+  "tags": []
+}
